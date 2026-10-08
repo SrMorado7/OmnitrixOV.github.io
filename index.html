@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Omnitrix Omniverse</title>
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;background:#050505;color:#fff;font-family:Arial,sans-serif}
+body{display:flex;justify-content:center;overflow-x:hidden}
+.app{width:min(100vw,1000px);padding:18px}
+.omni{position:relative;width:100%;aspect-ratio:1/1;max-height:82vh;margin:auto;overflow:hidden}
+.dial,.tapador{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;pointer-events:none}
+.dial{z-index:20}.tapador{z-index:40}
+.ring{position:absolute;left:49.24%;top:52.17%;width:0;height:0;z-index:30}
+.head{
+ position:absolute;left:0;top:0;width:57px;height:57px;object-fit:contain;
+ opacity:.82;pointer-events:none;filter:none;
+ transform:translate(-50%,-50%) rotate(var(--a)) translateY(calc(-1 * var(--d))) rotate(calc(-1 * var(--a)));
+ transition:transform .43s cubic-bezier(.2,.75,.25,1),width .25s,height .25s,opacity .25s;
+}
+.head.selected{width:68px;height:68px;--d:190px;opacity:1}
+.head.teleport{transition:none!important}
+#ui{margin:12px auto 0;max-width:800px}
+.buttons,.row{display:flex;gap:10px;justify-content:center;align-items:center;flex-wrap:wrap}
+button,label{font-size:15px}
+button{background:#151515;color:#fff;border:1px solid #555;border-radius:8px;padding:8px 13px;cursor:pointer}
+button:hover{background:#222}
+.row{margin-top:10px}
+.playlist{margin-top:12px;text-align:center}
+#list{margin:8px auto 0;max-height:220px;overflow:auto;text-align:left;background:#101010;border:1px solid #333;border-radius:8px;padding:8px}
+#list button{display:block;width:100%;text-align:left;margin:3px 0}
+.hidden{display:none}
+.status{text-align:center;margin-top:12px;font-size:14px;color:#bbb}
+#hide{display:block;margin:10px auto 0}
+@media(max-width:600px){
+ .app{padding:8px}.head{width:48px;height:48px}.head.selected{width:58px;height:58px}
+ .head.selected{--d:160px}.head{--d:150px}
+}
+</style>
+</head>
+<body>
+<main class="app">
+ <div class="omni" id="omni">
+  <div id="ring" class="ring"></div>
+  <img class="dial" src="assets/Dial.png" alt="">
+  <img class="tapador" src="assets/TaPADOR DIAL.png" alt="">
+ </div>
+
+ <section id="ui">
+  <div class="buttons">
+   <button id="prev">◀</button>
+   <button id="auto">▶ AUTO</button>
+   <button id="next">▶</button>
+  </div>
+  <div class="row">
+   <label><input id="loop" type="checkbox" checked> ♾ Bucle</label>
+   <label>Velocidad <input id="speed" type="range" min="120" max="2000" value="550"></label>
+   <button id="sound">🔊 Sonido ON</button>
+  </div>
+  <div class="row">
+   <label>Fondo <input id="bgColor" type="text" value="#050505" maxlength="7" size="8" placeholder="#RRGGBB"></label>
+   <button id="applyBg">🎨 Aplicar fondo</button>
+  </div>
+  <div class="playlist">
+   <b>Playlist automática</b>
+   <button id="show">Mostrar lista</button>
+   <div id="list" class="hidden"></div>
+  </div>
+  <div class="status">SELECCIONADO: <b id="name">—</b> · <span id="mode">MANUAL</span></div>
+ </section>
+ <button id="hide">⚙ Ocultar interfaz</button>
+</main>
+
+<script>
+const N=[
+"Wampire","Barrigabot","Buzzshock","Atomix","Bullfrag","Astrodactyl","Toepick","Halcon","El Peor",
+"Moulestache","Peskydust","Walkatrout","Escarabola","Crashhopper","Gravatrack","Bloxx","Jury Rigg",
+"Shockquatch","Clockwork","NRG","Tortutornado","Armadillo","Anfibio","Amenaza Acuatica","Nanomech",
+"Rath","Camaleon","Acuatico","Eatle","Fasttrack","Lodstar","Alien X","Goop","Mono Araña","Cerebron",
+"Piedra","Frio","Jetray","Humongosaurio","Eco Eco","Fuego Pantanoso 1","Fuego Pantanoso","Feedback",
+"Eon","Articguana","Muy Grande","Multiojos","Ditto","Upchuck 1","Upchuck","Frankestrike","Snare-oh",
+"Blitzwolfer","Wildvine","Fantasmatico","Ultra-T","4 brazos","Insectoide","Materia Gris","Diamante",
+"Bestia","Spitter","Cannonbolt","XLR8","Fuego"
+];
+const ring=document.querySelector('#ring'), nameEl=document.querySelector('#name'), modeEl=document.querySelector('#mode');
+const step=360/11;
+let idx=0, auto=false, timer=null, soundOn=true, renderToken=0;
+const heads=N.map((n,i)=>{
+ const im=document.createElement('img');
+ im.className='head';
+ im.src='assets/heads/'+n+'.png';
+ im.alt=n;
+ im.draggable=false;
+ ring.appendChild(im);
+ return im;
+});
+const giro=new Audio('assets/sounds/giro.wav');
+const listSound=new Audio('assets/sounds/list10.wav');
+function play(a){if(!soundOn)return;a.currentTime=0;a.play().catch(()=>{});}
+function signedDistance(i,c){
+ let d=i-c, half=N.length/2;
+ while(d>half)d-=N.length;
+ while(d<-half)d+=N.length;
+ return d;
+}
+function render(){
+ const token=++renderToken;
+ heads.forEach((x,i)=>{
+   const r=signedDistance(i,idx);
+   const visible=Math.abs(r)<=5;
+   x.classList.remove('selected');
+   if(!visible){
+     // Teleport the off-screen head with transitions disabled.
+     x.classList.add('teleport');
+     x.style.visibility='hidden';
+     x.style.setProperty('--a',`${r*step}deg`);
+     x.style.setProperty('--d','180px');
+     return;
+   }
+   x.style.visibility='visible';
+   x.classList.remove('teleport');
+   x.style.setProperty('--a',`${r*step}deg`);
+   x.style.setProperty('--d',i===idx?'190px':'180px');
+   if(i===idx)x.classList.add('selected');
+ });
+ nameEl.textContent=N[idx];
+ modeEl.textContent=auto?'AUTO':'MANUAL';
+
+ // Restore transitions only after the off-screen elements have been repositioned.
+ requestAnimationFrame(()=>{
+   if(token!==renderToken)return;
+   heads.forEach(x=>x.classList.remove('teleport'));
+ });
+}
+function select(i,playSound=true){
+ idx=(i%N.length+N.length)%N.length;
+ render();
+ if(playSound)play(giro);
+}
+function next(){select(idx+1)}
+function prev(){select(idx-1)}
+document.querySelector('#next').onclick=next;
+document.querySelector('#prev').onclick=prev;
+
+// La rueda del ratón también mueve el dial.
+document.querySelector('#omni').addEventListener('wheel',e=>{
+ e.preventDefault();
+ // Un giro de rueda = un paso del dial, independientemente de cuánto reporte el navegador.
+ if(e.deltaY>0) next(); else if(e.deltaY<0) prev();
+},{passive:false});
+
+// También permitimos la rueda mientras el cursor está sobre la zona del Omnitrix.
+document.addEventListener('keydown',e=>{
+ if(e.key==='ArrowRight'||e.key==='d'||e.key==='D'){e.preventDefault();next();}
+ if(e.key==='ArrowLeft'||e.key==='a'||e.key==='A'){e.preventDefault();prev();}
+ if(e.code==='Space'){e.preventDefault();toggleAuto();}
+});
+function toggleAuto(){
+ auto=!auto;
+ clearInterval(timer);
+ document.querySelector('#auto').textContent=auto?'■ PARAR':'▶ AUTO';
+ if(auto){
+   timer=setInterval(next,Number(document.querySelector('#speed').value));
+ }
+ render();
+}
+document.querySelector('#auto').onclick=toggleAuto;
+document.querySelector('#speed').oninput=()=>{
+ if(auto){clearInterval(timer);timer=setInterval(next,Number(document.querySelector('#speed').value));}
+};
+document.querySelector('#loop').onchange=()=>{
+ if(!document.querySelector('#loop').checked && idx===N.length-1)toggleAuto();
+};
+document.querySelector('#sound').onclick=e=>{
+ soundOn=!soundOn;
+ e.currentTarget.textContent=soundOn?'🔊 Sonido ON':'🔇 Sonido OFF';
+};
+
+function applyBackgroundColor(){
+ const input=document.querySelector('#bgColor');
+ let value=input.value.trim();
+ if(/^#?[0-9a-fA-F]{6}$/.test(value)){
+   if(!value.startsWith('#'))value='#'+value;
+   document.documentElement.style.backgroundColor=value;
+   document.body.style.backgroundColor=value;
+   input.value=value;
+ }else{
+   input.value='#050505';
+   document.documentElement.style.backgroundColor='#050505';
+   document.body.style.backgroundColor='#050505';
+ }
+}
+document.querySelector('#applyBg').onclick=applyBackgroundColor;
+document.querySelector('#bgColor').addEventListener('keydown',e=>{
+ if(e.key==='Enter')applyBackgroundColor();
+});
+const list=document.querySelector('#list');
+N.forEach((n,i)=>{
+ const b=document.createElement('button');
+ b.textContent=(i+1)+'. '+n;
+ b.onclick=()=>select(i);
+ list.appendChild(b);
+});
+document.querySelector('#show').onclick=e=>{
+ list.classList.toggle('hidden');
+ e.currentTarget.textContent=list.classList.contains('hidden')?'Mostrar lista':'Ocultar lista';
+ if(!list.classList.contains('hidden'))play(listSound);
+};
+document.querySelector('#hide').onclick=e=>{
+ const hidden=document.querySelector('#ui').style.display==='none';
+ document.querySelector('#ui').style.display=hidden?'':'none';
+ e.currentTarget.textContent=hidden?'⚙ Ocultar interfaz':'⚙ Mostrar interfaz';
+};
+render();
+</script>
+</body>
+</html>
